@@ -1,0 +1,52 @@
+name: Arvopaperihaku
+run-name: Haku
+
+# Sovellus käynnistää tämän, kun haet osaketta tai rahastoa nimellä.
+# Hakusana ja tulokset kulkevat salattuina; tulos tallentuu haaraan search-results.
+on:
+  workflow_dispatch:
+    inputs:
+      q:
+        description: "Salattu hakupyyntö (sovellus täyttää)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: search
+  cancel-in-progress: true
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Asenna kirjastot
+        run: pip install -r requirements.txt
+
+      - name: Hae
+        env:
+          SALKKU_PASSWORD: ${{ secrets.SALKKU_PASSWORD }}
+          QUERY: ${{ inputs.q }}
+        run: python scripts/search.py
+
+      - name: Tallenna tulos
+        # Tulos viedään omaan haaraan yhdeksi commitiksi (vanhat haut korvautuvat, historiaa ei kerry)
+        run: |
+          cp search/result.enc "$RUNNER_TEMP/result.enc"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q --orphan tmp-search
+          git rm -rq --cached .
+          mkdir -p search && cp "$RUNNER_TEMP/result.enc" search/result.enc
+          git add search/result.enc
+          git commit -q -m "Haku"
+          git push -q -f origin HEAD:search-results
