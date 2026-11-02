@@ -1,0 +1,84 @@
+name: Päivitä kurssit
+
+on:
+  schedule:
+    # Arkipäivisin 5 min välein klo ~8–23 Suomen aikaa (Helsingin ja USA:n pörssiajat).
+    # GitHub ei takaa tarkkaa ajoitusta: ruuhkassa ajot voivat viivästyä.
+    - cron: "*/5 6-21 * * 1-5"
+    # Joka aamu: rahastojen edellisen päivän arvot
+    - cron: "40 5 * * *"
+    # Kuukausittainen keep-alive, ettei GitHub poista ajastusta käytöstä
+    - cron: "7 3 1 * *"
+  push:
+    branches: [main]
+    paths-ignore: [".github/keepalive.txt", "README.md"]
+  workflow_dispatch:
+    inputs:
+      test_push:
+        description: "Lähetä testi-ilmoitus kaikille laitteille"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Asenna kirjastot
+        run: pip install --upgrade -r requirements.txt
+
+      - name: Pages-asetukset
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Hae kurssit
+        env:
+          SALKKU_PASSWORD: ${{ secrets.SALKKU_PASSWORD }}
+          TEST_PUSH: ${{ inputs.test_push }}
+        run: |
+          python scripts/update_data.py \
+            --config symbols.enc \
+            --out _site/data/quotes.enc \
+            --previous "${{ steps.pages.outputs.base_url }}/data/quotes.enc"
+
+      - name: Kokoa sivusto
+        run: |
+          cp index.html sw.js manifest.webmanifest _site/
+          cp icons/*.png _site/
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Julkaise GitHub Pagesiin
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Keep-alive
+        if: github.event.schedule == '7 3 1 * *'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          date -u > .github/keepalive.txt
+          git add .github/keepalive.txt
+          git commit -m "Keep-alive" && (git push || (git pull --rebase && git push))
